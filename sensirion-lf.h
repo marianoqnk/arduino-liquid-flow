@@ -38,7 +38,7 @@
 class SensirionLF
 {
 public:
-  SensirionLF(float flowScaleFactor, float tempScaleFactor, uint8_t i2cAddress);
+  SensirionLF(float flowScaleFactor, float tempScaleFactor, uint8_t i2cAddress, uint8_t IRQn = -1);
 
   int8_t init();
   int8_t readSample();
@@ -47,29 +47,32 @@ public:
   float getTemp() const { return mTemp; }
 
   bool isAirInLineDetected() const { return mAirInLineDetected; }
-  bool isHighFlowDetected()  const { return mHighFlowDetected;  }
+  bool isHighFlowDetected() const { return mHighFlowDetected; }
 
 private:
-  uint8_t crc8(const uint8_t* data, uint8_t len);
-  int8_t  i2c_read(uint8_t addr, uint8_t* data, uint16_t count);
-  int8_t  i2c_write(uint8_t addr, const uint8_t* data, uint16_t count);
+  uint8_t crc8(const uint8_t *data, uint8_t len);
+  int8_t i2c_read(uint8_t addr, uint8_t *data, uint16_t count);
+  int8_t i2c_write(uint8_t addr, const uint8_t *data, uint16_t count);
+  int8_t changeI2CAddress();
 
   int8_t trigger_soft_reset();
   int8_t start_measurement();
 
-  int8_t validate_crc(uint8_t* data, uint8_t word_count);
+  int8_t validate_crc(uint8_t *data, uint8_t word_count);
 
   inline float convert_and_scale(uint8_t b1, uint8_t b2, float scale_factor);
 
-  float   mFlowScaleFactor;
-  float   mTempScaleFactor;
+  float mFlowScaleFactor;
+  float mTempScaleFactor;
   uint8_t mI2cAddress;
 
-  float   mFlow;
-  float   mTemp;
+  float mFlow;
+  float mTemp;
 
   bool mAirInLineDetected;
   bool mHighFlowDetected;
+
+  uint8_t IRQn;
 };
 
 extern SensirionLF SLF3X;

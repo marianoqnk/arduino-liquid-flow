@@ -38,8 +38,8 @@
 #include <Wire.h>
 #include "sensirion-lf.h"
 
-static const float   SLF3X_SCALE_FACTOR_FLOW = 500.0;
-static const float   SLF3X_SCALE_FACTOR_TEMP = 200.0;
+static const float SLF3X_SCALE_FACTOR_FLOW = 500.0;
+static const float SLF3X_SCALE_FACTOR_TEMP = 200.0;
 static const uint8_t SLF3X_I2C_ADDRESS = 0x08;
 
 // TODO: verify on LD20 hardware
@@ -47,69 +47,104 @@ static const uint8_t SLF3X_I2C_ADDRESS = 0x08;
 // static const float   LD20_SCALE_FACTOR_TEMP = 200.0;
 // static const uint8_t LD20_I2C_ADDRESS = 0x08;
 
-static const uint8_t  CMD_START_MEASUREMENT_LENGTH = 2;
-static const uint8_t  CMD_START_MEASUREMENT[CMD_START_MEASUREMENT_LENGTH] = { 0x36, 0x08 };
-static const uint8_t  DATA_LENGTH = 9;
+static const uint8_t CMD_START_MEASUREMENT_LENGTH = 2;
+static const uint8_t CMD_START_MEASUREMENT[CMD_START_MEASUREMENT_LENGTH] = {0x36, 0x08};
+static const uint8_t DATA_LENGTH = 9;
 
-static const uint8_t  SOFT_RESET_I2C_ADDRESS = 0x0;
-static const uint8_t  CMD_SOFT_RESET_LENGTH = 1;
-static const uint8_t  CMD_SOFT_RESET[CMD_SOFT_RESET_LENGTH] = { 0x06 };
-static const uint8_t  SOFT_RESET_MAX_TRIES = 10;
+static const uint8_t CMD_CHANGE_I2C_ADDRESS_LENGTH = 2;
+static const uint8_t CMD_CHANGE_I2C_ADDRESS[CMD_CHANGE_I2C_ADDRESS_LENGTH] = {0x36, 0x61};
 
-static const uint8_t  CHIP_RESET_DELAY = 100;
+static const uint8_t SOFT_RESET_I2C_ADDRESS = 0x0;
+static const uint8_t CMD_SOFT_RESET_LENGTH = 1;
+static const uint8_t CMD_SOFT_RESET[CMD_SOFT_RESET_LENGTH] = {0x06};
+static const uint8_t SOFT_RESET_MAX_TRIES = 10;
+
+static const uint8_t CHIP_RESET_DELAY = 100;
 static const uint16_t CHIP_RESET_RETRY_DELAY = 500;
 
-static const uint8_t  INITIAL_MEASURE_DELAY = 120; // LD20: 120ms; SLF3X: 50ms
+static const uint8_t INITIAL_MEASURE_DELAY = 120; // LD20: 120ms; SLF3X: 50ms
 
 SensirionLF::SensirionLF(float flowScaleFactor,
                          float tempScaleFactor,
-                         uint8_t i2cAddress)
+                         uint8_t i2cAddress, uint8_t IRQn)
     : mFlowScaleFactor(flowScaleFactor),
       mTempScaleFactor(tempScaleFactor),
       mI2cAddress(i2cAddress),
       mAirInLineDetected(false),
-      mHighFlowDetected(false)
+      mHighFlowDetected(false), IRQn(IRQn)
 {
 }
 
 int8_t SensirionLF::init()
 {
   Wire.begin();
-  if (trigger_soft_reset() != 0) {
+  if (trigger_soft_reset() != 0)
+  {
     return 1;
+  }
+  if (mI2cAddress != SLF3X_I2C_ADDRESS)
+  {
+    if (IRQn != -1)
+      changeI2CAddress();
+    else
+    {
+      Serial.println(F("To change the I2C address need define pin IRqn"));
+      return 1;
+    }
   }
   return start_measurement();
 }
 
+int8_t SensirionLF::changeI2CAddress()
+{
+  uint8_t data[5] = {CMD_CHANGE_I2C_ADDRESS[0], CMD_CHANGE_I2C_ADDRESS[1], 0x00, mI2cAddress, 0x00};
+  data[4] = crc8(data + 2, 2);
+  pinMode(IRQn, INPUT);
+  pinMode(IRQn, OUTPUT);
+  digitalWrite(IRQn, LOW);
+  i2c_write(SLF3X_I2C_ADDRESS, data, 5);
+  digitalWrite(IRQn, HIGH);
+  delayMicroseconds(120);
+  digitalWrite(IRQn, LOW);
+  pinMode(IRQn, INPUT);
+  while (!IRQn)
+    ;
+  delay(CHIP_RESET_DELAY);
+  return 0;
+}
 int8_t SensirionLF::readSample()
 {
-  uint8_t data[DATA_LENGTH] = { 0 };
+  uint8_t data[DATA_LENGTH] = {0};
 
-  if (i2c_read(mI2cAddress, data, DATA_LENGTH) != 0) {
+  if (i2c_read(mI2cAddress, data, DATA_LENGTH) != 0)
+  {
     return 1;
   }
-  if (validate_crc(data, 3) != 0) {
+  if (validate_crc(data, 3) != 0)
+  {
     return 2;
   }
   mFlow = convert_and_scale(data[0], data[1], mFlowScaleFactor);
   mTemp = convert_and_scale(data[3], data[4], mTempScaleFactor);
-  mAirInLineDetected = data[7]       & 1U;
+  mAirInLineDetected = data[7] & 1U;
   mHighFlowDetected = (data[7] >> 1) & 1U;
   return 0;
 }
 
-int8_t SensirionLF::validate_crc(uint8_t* data, uint8_t word_count)
+int8_t SensirionLF::validate_crc(uint8_t *data, uint8_t word_count)
 {
   // the data coming from the sensor is in the following format:
   // [MSB0][LSB0][CRC0][MSB1][LSB1][CRC1]...[MSBx][LSBx][CRCx]
   // in this function, we verify 'word_count' MSB+LSB pairs
 
-  static const uint8_t DATA_SIZE = 2; //
+  static const uint8_t DATA_SIZE = 2;             //
   static const uint8_t STEP_SIZE = DATA_SIZE + 1; // 2 data bytes + crc
 
-  for (int i = 0; i < word_count; ++i) {
+  for (int i = 0; i < word_count; ++i)
+  {
     uint8_t pos = i * STEP_SIZE;
-    if (crc8(data + pos, DATA_SIZE) != data[pos + DATA_SIZE]) {
+    if (crc8(data + pos, DATA_SIZE) != data[pos + DATA_SIZE])
+    {
       return 1;
     }
   }
@@ -118,7 +153,8 @@ int8_t SensirionLF::validate_crc(uint8_t* data, uint8_t word_count)
 
 int8_t SensirionLF::start_measurement()
 {
-  if (i2c_write(mI2cAddress, CMD_START_MEASUREMENT, CMD_START_MEASUREMENT_LENGTH) != 0) {
+  if (i2c_write(mI2cAddress, CMD_START_MEASUREMENT, CMD_START_MEASUREMENT_LENGTH) != 0)
+  {
     return 1;
   }
 
@@ -129,11 +165,13 @@ int8_t SensirionLF::start_measurement()
 int8_t SensirionLF::trigger_soft_reset()
 {
   uint8_t count = 0;
-  while (i2c_write(SOFT_RESET_I2C_ADDRESS, CMD_SOFT_RESET, CMD_SOFT_RESET_LENGTH) != 0) {
+  while (i2c_write(SOFT_RESET_I2C_ADDRESS, CMD_SOFT_RESET, CMD_SOFT_RESET_LENGTH) != 0)
+  {
     Serial.println("Error while sending soft reset command, retrying...");
     delay(CHIP_RESET_RETRY_DELAY);
     ++count;
-    if (count > SOFT_RESET_MAX_TRIES) {
+    if (count > SOFT_RESET_MAX_TRIES)
+    {
       return 1;
     }
   }
@@ -153,17 +191,22 @@ inline float SensirionLF::convert_and_scale(uint8_t b1, uint8_t b2, float scale_
   return (float)((int16_t)((b1 << 8) | b2)) / scale_factor;
 }
 
-uint8_t SensirionLF::crc8(const uint8_t* data, uint8_t len)
+uint8_t SensirionLF::crc8(const uint8_t *data, uint8_t len)
 {
   // adapted from SHT21 sample code from http://www.sensirion.com/en/products/humidity-temperature/download-center/
   uint8_t crc = 0xff;
   uint8_t byteCtr;
-  for (byteCtr = 0; byteCtr < len; ++byteCtr) {
+  for (byteCtr = 0; byteCtr < len; ++byteCtr)
+  {
     crc ^= (data[byteCtr]);
-    for (uint8_t bit = 8; bit > 0; --bit) {
-      if (crc & 0x80) {
+    for (uint8_t bit = 8; bit > 0; --bit)
+    {
+      if (crc & 0x80)
+      {
         crc = (crc << 1) ^ 0x31;
-      } else {
+      }
+      else
+      {
         crc = (crc << 1);
       }
     }
@@ -171,30 +214,35 @@ uint8_t SensirionLF::crc8(const uint8_t* data, uint8_t len)
   return crc;
 }
 
-int8_t SensirionLF::i2c_read(uint8_t addr, uint8_t* data, uint16_t count)
+int8_t SensirionLF::i2c_read(uint8_t addr, uint8_t *data, uint16_t count)
 {
-    Wire.requestFrom(addr, count);
-    if (Wire.available() != count) {
-        return -1;
-    }
-    for (int i = 0; i < count; ++i) {
-        data[i] = Wire.read();
-    }
-    return 0;
+  Wire.requestFrom(addr, count);
+  if ((uint16_t)Wire.available() != count)
+  {
+    return -1;
+  }
+  for (uint16_t i = 0; i < count; ++i)
+  {
+    data[i] = Wire.read();
+  }
+  return 0;
 }
 
-int8_t SensirionLF::i2c_write(uint8_t addr, const uint8_t* data, uint16_t count)
+int8_t SensirionLF::i2c_write(uint8_t addr, const uint8_t *data, uint16_t count)
 {
-    Wire.beginTransmission(addr);
-    for (int i = 0; i < count; ++i) {
-        if (Wire.write(data[i]) != 1) {
-            return false;
-        }
+  Wire.beginTransmission(addr);
+  for (uint16_t i = 0; i < count; ++i)
+  {
+    if (Wire.write(data[i]) != 1)
+    {
+      return false;
     }
-    if (Wire.endTransmission() != 0) {
-        return -1;
-    }
-    return 0;
+  }
+  if (Wire.endTransmission() != 0)
+  {
+    return -1;
+  }
+  return 0;
 }
 
 SensirionLF SLF3X(SLF3X_SCALE_FACTOR_FLOW,
